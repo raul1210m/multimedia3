@@ -1,194 +1,270 @@
-let albums = [];
-let filtered = [];
+/* ==============================
+   WORDLE - Vanilla JS
+   Features:
+   - Random target from array
+   - Input validation + message UI
+   - New Game button after win/lose
+   - Enter key support
+   - Shows correct word on loss
+   - Flip animation
+   - Correct duplicate-letter logic
+   - Basic stats: played, win%, streak
+================================ */
 
-const albumsRow = document.getElementById("albumsRow");
-const searchInput = document.getElementById("searchInput");
-const sortSelect = document.getElementById("sortSelect");
+const WORDS = [
+  "table", "chair", "piano", "mouse", "house",
+  "plant", "brain", "cloud", "beach", "fruit",
+  "media", "candy", "stone", "light", "water"
+];
 
-const modalTitle = document.getElementById("modalTitle");
-const modalBody = document.getElementById("modalBody");
-const playSpotifyBtn = document.getElementById("playSpotifyBtn");
+const MAX_TRIES = 6;
+const WORD_LEN = 5;
 
-function parseLengthToSeconds(len) {
-  const [m, s] = (len || "0:00").split(":").map(Number);
-  return (m * 60) + (s || 0);
+// DOM
+const boardEl = document.getElementById("board");
+const inputEl = document.getElementById("guessInput");
+const guessBtn = document.getElementById("guessButton");
+const newGameBtn = document.getElementById("newGameButton");
+const messageEl = document.getElementById("message");
+
+const gamesPlayedEl = document.getElementById("gamesPlayed");
+const winPercentEl = document.getElementById("winPercent");
+const streakEl = document.getElementById("streak");
+
+// Game state
+let targetWord = "";
+let currentRow = 0;
+let gameOver = false;
+
+// Stats (simple, in memory)
+let stats = {
+  played: 0,
+  wins: 0,
+  streak: 0
+};
+
+// Board references
+let cells = []; // 6 x 5
+
+function pickRandomWord() {
+  const idx = Math.floor(Math.random() * WORDS.length);
+  return WORDS[idx].toLowerCase();
 }
 
-function secondsToMMSS(total) {
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+function setMessage(text, type = "") {
+  messageEl.textContent = text;
+  messageEl.classList.remove("error", "success");
+  if (type) messageEl.classList.add(type);
 }
 
-function computeStats(tracks) {
-  const n = tracks.length;
-  const secs = tracks.map(t => parseLengthToSeconds(t.length));
-  const total = secs.reduce((a, b) => a + b, 0);
-  const avg = n ? Math.round(total / n) : 0;
+function updateStatsUI() {
+  gamesPlayedEl.textContent = String(stats.played);
 
-  let longestIdx = 0;
-  let shortestIdx = 0;
-  secs.forEach((v, i) => {
-    if (v > secs[longestIdx]) longestIdx = i;
-    if (v < secs[shortestIdx]) shortestIdx = i;
-  });
+  const winPct = stats.played === 0 ? 0 : Math.round((stats.wins / stats.played) * 100);
+  winPercentEl.textContent = `${winPct}%`;
 
-  return {
-    n,
-    total,
-    avg,
-    longest: tracks[longestIdx],
-    shortest: tracks[shortestIdx],
-  };
+  streakEl.textContent = String(stats.streak);
 }
 
-function sortAlbums(list, mode) {
-  const copy = [...list];
-  switch (mode) {
-    case "artist-az":
-      copy.sort((a, b) => a.artist.localeCompare(b.artist));
-      break;
-    case "album-az":
-      copy.sort((a, b) => a.album.localeCompare(b.album));
-      break;
-    case "tracks-asc":
-      copy.sort((a, b) => a.tracks.length - b.tracks.length);
-      break;
-    case "tracks-desc":
-      copy.sort((a, b) => b.tracks.length - a.tracks.length);
-      break;
+function buildBoard() {
+  boardEl.innerHTML = "";
+  cells = [];
+
+  for (let r = 0; r < MAX_TRIES; r++) {
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const rowCells = [];
+    for (let c = 0; c < WORD_LEN; c++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.textContent = "";
+      row.appendChild(cell);
+      rowCells.push(cell);
+    }
+
+    boardEl.appendChild(row);
+    cells.push(rowCells);
   }
-  return copy;
 }
 
-function renderAlbums(list) {
-  albumsRow.innerHTML = "";
-
-  list.forEach((a, idx) => {
-    const col = document.createElement("div");
-    col.className = "col-xl-2 col-md-3 col-sm-6 col-12";
-
-    col.innerHTML = `
-      <div class="card h-100 d-flex flex-column album-card">
-        <img src="assets/img/${a.thumbnail}" class="card-img-top album-img" alt="${a.artist} - ${a.album}">
-        <div class="card-body">
-          <h5 class="card-title">${a.artist}</h5>
-          <p class="card-text">${a.album}</p>
-        </div>
-        <div class="card-footer mt-auto bg-transparent border-0">
-          <button
-            class="btn btn-primary w-100 view-tracklist-btn"
-            data-index="${idx}"
-            data-bs-toggle="modal"
-            data-bs-target="#tracklistModal"
-          >
-            View Tracklist
-          </button>
-        </div>
-      </div>
-    `;
-
-    albumsRow.appendChild(col);
-  });
+function clearBoardStyles() {
+  for (let r = 0; r < MAX_TRIES; r++) {
+    for (let c = 0; c < WORD_LEN; c++) {
+      const cell = cells[r][c];
+      cell.textContent = "";
+      cell.className = "cell";
+    }
+  }
 }
 
-// Event delegation (un singur listener)
-albumsRow.addEventListener("click", (e) => {
-  const btn = e.target.closest(".view-tracklist-btn");
-  if (!btn) return;
+function sanitizeGuess(raw) {
+  return raw.trim().toLowerCase();
+}
 
-  const idx = Number(btn.dataset.index);
-  const album = filtered[idx];
+function validateGuess(guess) {
+  if (guess.length !== WORD_LEN) {
+    return `Guess must be exactly ${WORD_LEN} letters.`;
+  }
+  if (!/^[a-z]+$/.test(guess)) {
+    return "Use only letters (A-Z).";
+  }
+  return "";
+}
 
-  modalTitle.textContent = `${album.artist} - ${album.album}`;
+/*
+  Wordle-like feedback with duplicates handled:
 
-  const stats = computeStats(album.tracks);
-  const statsHtml = `
-    <div class="mb-3 p-3 bg-light rounded">
-      <div class="row g-2">
-        <div class="col-6 col-md-3"><strong>Tracks:</strong> ${stats.n}</div>
-        <div class="col-6 col-md-3"><strong>Total:</strong> ${secondsToMMSS(stats.total)}</div>
-        <div class="col-6 col-md-3"><strong>Average:</strong> ${secondsToMMSS(stats.avg)}</div>
-        <div class="col-12 col-md-6"><strong>Longest:</strong> ${stats.longest.title} (${stats.longest.length})</div>
-        <div class="col-12 col-md-6"><strong>Shortest:</strong> ${stats.shortest.title} (${stats.shortest.length})</div>
-      </div>
-    </div>
-  `;
+  Step 1: Mark greens, and "consume" matched letters from target counts
+  Step 2: For remaining letters, mark yellow if still available in target counts, else red
+*/
+function getFeedback(guess, target) {
+  const feedback = Array(WORD_LEN).fill("red");
+  const targetCounts = {};
 
-  const rows = album.tracks.map((t, i) => `
-    <tr>
-      <td class="text-muted">${i + 1}</td>
-      <td>
-        <a class="link-primary link-underline-opacity-0 link-underline-opacity-75-hover"
-           href="${t.url}" target="_blank" rel="noopener">
-          ${t.title}
-        </a>
-      </td>
-      <td class="text-end">${t.length}</td>
-    </tr>
-  `).join("");
+  // count target letters
+  for (const ch of target) {
+    targetCounts[ch] = (targetCounts[ch] || 0) + 1;
+  }
 
-  modalBody.innerHTML = `
-    ${statsHtml}
-    <div class="table-responsive">
-      <table class="table table-sm align-middle">
-        <thead>
-          <tr>
-            <th style="width: 60px;">#</th>
-            <th>Title</th>
-            <th class="text-end" style="width: 90px;">Length</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
+  // pass 1: greens
+  for (let i = 0; i < WORD_LEN; i++) {
+    if (guess[i] === target[i]) {
+      feedback[i] = "green";
+      targetCounts[guess[i]] -= 1;
+    }
+  }
 
-  const first = album.tracks[0];
-  if (first?.url) {
-    playSpotifyBtn.href = first.url;
-    playSpotifyBtn.classList.remove("d-none");
+  // pass 2: yellows (only if still available)
+  for (let i = 0; i < WORD_LEN; i++) {
+    if (feedback[i] === "green") continue;
+
+    const ch = guess[i];
+    if (targetCounts[ch] > 0) {
+      feedback[i] = "yellow";
+      targetCounts[ch] -= 1;
+    } else {
+      feedback[i] = "red";
+    }
+  }
+
+  return feedback;
+}
+
+function paintRow(rowIndex, guess, feedback) {
+  // Put letters first
+  for (let c = 0; c < WORD_LEN; c++) {
+    const cell = cells[rowIndex][c];
+    cell.textContent = guess[c].toUpperCase();
+    cell.classList.add("filled");
+  }
+
+  // Reveal with small stagger for nicer effect
+  for (let c = 0; c < WORD_LEN; c++) {
+    const cell = cells[rowIndex][c];
+    setTimeout(() => {
+      cell.classList.add("reveal");
+      // apply color class after flip reaches "hidden" phase
+      setTimeout(() => {
+        cell.classList.add(feedback[c]);
+      }, 280);
+    }, c * 90);
+  }
+}
+
+function endGame(won) {
+  gameOver = true;
+  inputEl.disabled = true;
+  guessBtn.disabled = true;
+  newGameBtn.classList.remove("hidden");
+
+  stats.played += 1;
+
+  if (won) {
+    stats.wins += 1;
+    stats.streak += 1;
+    setMessage("You won! 🎉", "success");
+    alert("You won! 🎉");
   } else {
-    playSpotifyBtn.classList.add("d-none");
+    stats.streak = 0;
+    const upper = targetWord.toUpperCase();
+    setMessage(`You lost! The word was: ${upper}`, "error");
+    alert(`You lost! The word was: ${upper}`);
   }
-});
 
-function applyFilterAndSort() {
-  const q = (searchInput.value || "").trim().toLowerCase();
-  const mode = sortSelect.value;
-
-  const base = albums.filter(a =>
-    a.artist.toLowerCase().includes(q) || a.album.toLowerCase().includes(q)
-  );
-
-  filtered = sortAlbums(base, mode);
-  renderAlbums(filtered);
+  updateStatsUI();
 }
 
-searchInput.addEventListener("input", applyFilterAndSort);
-sortSelect.addEventListener("change", applyFilterAndSort);
+function handleGuess() {
+  if (gameOver) return;
 
-// Back to top
-const backToTop = document.getElementById("backToTop");
-window.addEventListener("scroll", () => {
-  backToTop.classList.toggle("d-none", window.scrollY < 400);
-});
-backToTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+  const guess = sanitizeGuess(inputEl.value);
+  const error = validateGuess(guess);
 
-async function init() {
-  try {
-    const res = await fetch("library.json");
-    if (!res.ok) throw new Error("Could not load library.json");
-    albums = await res.json();
-
-    filtered = sortAlbums(albums, sortSelect.value);
-    renderAlbums(filtered);
-  } catch (err) {
-    albumsRow.innerHTML = `
-      <div class="col-12">
-        <div class="alert alert-danger">Error: ${err.message}</div>
-      </div>
-    `;
+  if (error) {
+    setMessage(error, "error");
+    return;
   }
+
+  setMessage(""); // clear message
+
+  const feedback = getFeedback(guess, targetWord);
+  paintRow(currentRow, guess, feedback);
+
+  // Check win
+  if (guess === targetWord) {
+    // wait for reveal to look nicer
+    setTimeout(() => endGame(true), 900);
+    return;
+  }
+
+  currentRow += 1;
+
+  if (currentRow >= MAX_TRIES) {
+    setTimeout(() => endGame(false), 900);
+    return;
+  }
+
+  inputEl.value = "";
+  inputEl.focus();
 }
-init();
+
+function newGame() {
+  targetWord = pickRandomWord();
+  currentRow = 0;
+  gameOver = false;
+
+  clearBoardStyles();
+  setMessage("New game started. Good luck!");
+
+  inputEl.value = "";
+  inputEl.disabled = false;
+  guessBtn.disabled = false;
+  newGameBtn.classList.add("hidden");
+
+  inputEl.focus();
+
+  // (Optional debug)
+  // console.log("Target:", targetWord);
+}
+
+function wireEvents() {
+  guessBtn.addEventListener("click", handleGuess);
+
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") handleGuess();
+  });
+
+  // Force only 5 letters visually + keep clean
+  inputEl.addEventListener("input", () => {
+    inputEl.value = inputEl.value.replace(/[^a-zA-Z]/g, "").slice(0, WORD_LEN);
+  });
+
+  newGameBtn.addEventListener("click", newGame);
+}
+
+// Init
+buildBoard();
+wireEvents();
+updateStatsUI();
+newGame();

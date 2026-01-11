@@ -1,46 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wordle - Multimedia Lab</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <h1 class="title">WORDLE</h1>
+      <p class="subtitle">Guess the 5-letter word in 6 tries</p>
+    </header>
 
-<div class="container py-4">
-  <h1 class="mb-3">Music Library</h1>
-
-  <div class="row g-2 align-items-center mb-3">
-    <div class="col-12 col-md-6">
-      <input id="searchInput" class="form-control" placeholder="Search by artist or album..." />
-    </div>
-
-    <div class="col-12 col-md-6 text-md-end">
-      <select id="sortSelect" class="form-select d-inline-block w-auto">
-        <option value="artist-az">Sort: Artist (A-Z)</option>
-        <option value="album-az">Sort: Album (A-Z)</option>
-        <option value="tracks-asc">Sort: #Tracks (asc)</option>
-        <option value="tracks-desc">Sort: #Tracks (desc)</option>
-      </select>
-    </div>
-  </div>
-
-  <div id="albumsRow" class="row g-3"></div>
-</div>
-
-<!-- Modal -->
-<div class="modal fade" id="tracklistModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-scrollable modal-lg">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="modalTitle">Tracklist</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+    <section class="stats" aria-label="Game statistics">
+      <div class="stat">
+        <span class="stat-value" id="gamesPlayed">0</span>
+        <span class="stat-label">Played</span>
       </div>
-
-      <div class="modal-body" id="modalBody"></div>
-
-      <div class="modal-footer">
-        <a id="playSpotifyBtn" class="btn btn-success d-none" target="_blank" rel="noopener">
-          Play on Spotify
-        </a>
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-          Close Tracklist
-        </button>
+      <div class="stat">
+        <span class="stat-value" id="winPercent">0%</span>
+        <span class="stat-label">Win %</span>
       </div>
-    </div>
-  </div>
-</div>
+      <div class="stat">
+        <span class="stat-value" id="streak">0</span>
+        <span class="stat-label">Streak</span>
+      </div>
+    </section>
 
-<button id="backToTop" class="btn btn-primary back-to-top d-none">Back to top</button>
+    <div id="message" class="message" role="status" aria-live="polite"></div>
+
+    <section class="game">
+      <div id="board" class="board" aria-label="Word board"></div>
+
+      <div class="controls">
+        <input
+          id="guessInput"
+          class="guess-input"
+          type="text"
+          maxlength="5"
+          placeholder="type a 5-letter word"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="guessButton" class="btn primary">Guess</button>
+        <button id="newGameButton" class="btn ghost hidden">New Game</button>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <small>HTML + CSS + JS (DOM + events + logic)</small>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
