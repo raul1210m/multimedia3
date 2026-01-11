@@ -1,0 +1,20 @@
+[
+  {
+    "artist": "Daft Punk",
+    "album": "Discovery",
+    "thumbnail": "discovery.jpg",
+    "tracks": [
+      { "title": "One More Time", "length": "5:20", "url": "https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV" },
+      { "title": "Aerodynamic", "length": "3:27", "url": "https://open.spotify.com/track/6V7lD3C4gZ1L8x7m5QXx7a" }
+    ]
+  },
+  {
+    "artist": "Adele",
+    "album": "21",
+    "thumbnail": "adele-21.jpg",
+    "tracks": [
+      { "title": "Rolling in the Deep", "length": "3:48", "url": "https://open.spotify.com/track/1c8gk2PeTE04A1pIDH9YMk" },
+      { "title": "Someone Like You", "length": "4:45", "url": "https://open.spotify.com/track/4kflIGfjdZJW4ot2ioixTB" }
+    ]
+  }
+]
