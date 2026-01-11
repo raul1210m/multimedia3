@@ -2,54 +2,99 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Wordle - Multimedia Lab</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dynamic Chart Visualization (Canvas)</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main class="app">
-    <header class="header">
-      <h1 class="title">WORDLE</h1>
-      <p class="subtitle">Guess the 5-letter word in 6 tries</p>
+  <main class="app" id="appRoot">
+    <header class="top">
+      <h1>Dynamic Chart Visualization</h1>
+      <p>Canvas API • Real-time streaming chart • Controls • Tooltips • Export</p>
     </header>
 
-    <section class="stats" aria-label="Game statistics">
-      <div class="stat">
-        <span class="stat-value" id="gamesPlayed">0</span>
-        <span class="stat-label">Played</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value" id="winPercent">0%</span>
-        <span class="stat-label">Win %</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value" id="streak">0</span>
-        <span class="stat-label">Streak</span>
-      </div>
-    </section>
+    <section class="layout">
+      <div class="left">
+        <div class="canvas-wrap">
+          <canvas id="chartCanvas" width="900" height="600"></canvas>
+          <div id="tooltip" class="tooltip hidden"></div>
+        </div>
 
-    <div id="message" class="message" role="status" aria-live="polite"></div>
+        <div class="controls">
+          <div class="control-group">
+            <button id="toggleBtn" class="btn primary">Pause</button>
+            <button id="resetBtn" class="btn">Reset</button>
+            <button id="exportBtn" class="btn">Export PNG</button>
+          </div>
 
-    <section class="game">
-      <div id="board" class="board" aria-label="Word board"></div>
+          <div class="control-group">
+            <label class="label">
+              Update interval: <span id="intervalLabel">1000</span> ms
+              <input id="intervalSlider" type="range" min="100" max="2000" step="50" value="1000"/>
+            </label>
+          </div>
 
-      <div class="controls">
-        <input
-          id="guessInput"
-          class="guess-input"
-          type="text"
-          maxlength="5"
-          placeholder="type a 5-letter word"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <button id="guessButton" class="btn primary">Guess</button>
-        <button id="newGameButton" class="btn ghost hidden">New Game</button>
+          <div class="control-group grid-2">
+            <label class="label">
+              Min value
+              <input id="minInput" type="number" value="0" />
+            </label>
+            <label class="label">
+              Max value
+              <input id="maxInput" type="number" value="600" />
+            </label>
+          </div>
+
+          <div class="control-group grid-2">
+            <label class="check">
+              <input id="gridToggle" type="checkbox" checked />
+              Show grid
+            </label>
+
+            <label class="check">
+              <input id="smoothToggle" type="checkbox" />
+              Smooth (moving avg)
+            </label>
+          </div>
+
+          <div class="control-group">
+            <div class="segmented">
+              <button class="seg active" data-type="line">Line</button>
+              <button class="seg" data-type="bar">Bar</button>
+              <button class="seg" data-type="area">Area</button>
+              <button class="seg" data-type="scatter">Scatter</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="label">
+              Theme
+              <select id="themeSelect">
+                <option value="dark" selected>Dark</option>
+                <option value="light">Light</option>
+                <option value="contrast">High Contrast</option>
+              </select>
+            </label>
+          </div>
+        </div>
       </div>
+
+      <aside class="right">
+        <h2>Live Statistics</h2>
+        <div class="stats" id="statsPanel"></div>
+
+        <div class="legend">
+          <h3>Series</h3>
+          <div class="legend-item"><span class="dot s1"></span> Series A</div>
+          <div class="legend-item"><span class="dot s2"></span> Series B</div>
+          <div class="legend-item"><span class="dot s3"></span> Series C</div>
+          <small class="hint">Hover the chart to see tooltips.</small>
+        </div>
+      </aside>
     </section>
 
     <footer class="footer">
-      <small>HTML + CSS + JS (DOM + events + logic)</small>
+      <small>Canvas drawing • DOM events • setInterval animation • FIFO data queue</small>
     </footer>
   </main>
 

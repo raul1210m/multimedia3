@@ -1,270 +1,582 @@
-/* ==============================
-   WORDLE - Vanilla JS
-   Features:
-   - Random target from array
-   - Input validation + message UI
-   - New Game button after win/lose
-   - Enter key support
-   - Shows correct word on loss
-   - Flip animation
-   - Correct duplicate-letter logic
-   - Basic stats: played, win%, streak
-================================ */
+// ==============================================
+// Dynamic Chart Visualization with Canvas API
+// - Multiple series (FIFO)
+// - Chart types: line / bar / area / scatter
+// - Smoothing option (moving average)
+// - Controls: pause, interval, min/max, grid, reset
+// - Tooltips on hover
+// - Statistics panel (current/min/max/avg/trend)
+// - Export PNG
+// - Themes
+// ==============================================
 
-const WORDS = [
-  "table", "chair", "piano", "mouse", "house",
-  "plant", "brain", "cloud", "beach", "fruit",
-  "media", "candy", "stone", "light", "water"
-];
+const canvas = document.getElementById("chartCanvas");
+const ctx = canvas.getContext("2d");
 
-const MAX_TRIES = 6;
-const WORD_LEN = 5;
+const tooltip = document.getElementById("tooltip");
 
-// DOM
-const boardEl = document.getElementById("board");
-const inputEl = document.getElementById("guessInput");
-const guessBtn = document.getElementById("guessButton");
-const newGameBtn = document.getElementById("newGameButton");
-const messageEl = document.getElementById("message");
+// Controls
+const toggleBtn = document.getElementById("toggleBtn");
+const resetBtn = document.getElementById("resetBtn");
+const exportBtn = document.getElementById("exportBtn");
 
-const gamesPlayedEl = document.getElementById("gamesPlayed");
-const winPercentEl = document.getElementById("winPercent");
-const streakEl = document.getElementById("streak");
+const intervalSlider = document.getElementById("intervalSlider");
+const intervalLabel = document.getElementById("intervalLabel");
 
-// Game state
-let targetWord = "";
-let currentRow = 0;
-let gameOver = false;
+const minInput = document.getElementById("minInput");
+const maxInput = document.getElementById("maxInput");
 
-// Stats (simple, in memory)
-let stats = {
-  played: 0,
-  wins: 0,
-  streak: 0
+const gridToggle = document.getElementById("gridToggle");
+const smoothToggle = document.getElementById("smoothToggle");
+const themeSelect = document.getElementById("themeSelect");
+
+const statsPanel = document.getElementById("statsPanel");
+const typeButtons = Array.from(document.querySelectorAll(".seg"));
+
+const WIDTH = canvas.width;   // 900
+const HEIGHT = canvas.height; // 600
+
+// Grid config (as in the lab description)
+const GRID_X = 150;
+const GRID_Y = 100;
+const STEP_X = 20;
+
+// How many points fit in canvas with spacing STEP_X:
+const MAX_POINTS = Math.floor(WIDTH / STEP_X) + 1;
+
+// Themes
+const THEMES = {
+  dark: {
+    bg: "rgba(0,0,0,0.20)",
+    grid: "rgba(255,255,255,0.14)",
+    axis: "rgba(255,255,255,0.35)",
+    text: "rgba(255,255,255,0.75)",
+    series: ["#22c55e", "#60a5fa", "#f59e0b"]
+  },
+  light: {
+    bg: "rgba(255,255,255,0.85)",
+    grid: "rgba(0,0,0,0.10)",
+    axis: "rgba(0,0,0,0.30)",
+    text: "rgba(0,0,0,0.70)",
+    series: ["#16a34a", "#2563eb", "#d97706"]
+  },
+  contrast: {
+    bg: "rgba(0,0,0,0.95)",
+    grid: "rgba(255,255,255,0.22)",
+    axis: "rgba(255,255,255,0.70)",
+    text: "rgba(255,255,255,0.90)",
+    series: ["#00ff6a", "#00b7ff", "#ffd000"]
+  }
 };
 
-// Board references
-let cells = []; // 6 x 5
+let theme = THEMES.dark;
 
-function pickRandomWord() {
-  const idx = Math.floor(Math.random() * WORDS.length);
-  return WORDS[idx].toLowerCase();
+// Chart mode
+let chartType = "line"; // line | bar | area | scatter
+
+// Running state (setInterval)
+let isRunning = true;
+let intervalMs = Number(intervalSlider.value);
+let timerId = null;
+
+// Data range (user-controlled)
+let minVal = Number(minInput.value);
+let maxVal = Number(maxInput.value);
+
+// Three series with independent patterns
+const seriesList = [
+  { name: "Series A", data: [], color: theme.series[0], last: 300, trend: 0 },
+  { name: "Series B", data: [], color: theme.series[1], last: 300, trend: 0 },
+  { name: "Series C", data: [], color: theme.series[2], last: 300, trend: 0 }
+];
+
+// -------- Utilities --------
+
+function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+function randBetween(a, b) {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  return lo + Math.random() * (hi - lo);
 }
 
-function setMessage(text, type = "") {
-  messageEl.textContent = text;
-  messageEl.classList.remove("error", "success");
-  if (type) messageEl.classList.add(type);
+function normalizeToCanvas(value) {
+  // value in [minVal, maxVal] -> y in [HEIGHT..0]
+  const v = clamp(value, minVal, maxVal);
+  const t = (v - minVal) / (maxVal - minVal || 1);
+  return HEIGHT - t * HEIGHT;
 }
 
-function updateStatsUI() {
-  gamesPlayedEl.textContent = String(stats.played);
-
-  const winPct = stats.played === 0 ? 0 : Math.round((stats.wins / stats.played) * 100);
-  winPercentEl.textContent = `${winPct}%`;
-
-  streakEl.textContent = String(stats.streak);
+function canvasToValue(y) {
+  // y in [0..HEIGHT] -> value in [minVal..maxVal]
+  const t = 1 - (y / HEIGHT);
+  return minVal + t * (maxVal - minVal);
 }
 
-function buildBoard() {
-  boardEl.innerHTML = "";
-  cells = [];
-
-  for (let r = 0; r < MAX_TRIES; r++) {
-    const row = document.createElement("div");
-    row.className = "row";
-
-    const rowCells = [];
-    for (let c = 0; c < WORD_LEN; c++) {
-      const cell = document.createElement("div");
-      cell.className = "cell";
-      cell.textContent = "";
-      row.appendChild(cell);
-      rowCells.push(cell);
+function movingAverage(arr, windowSize = 3) {
+  if (windowSize <= 1) return arr.slice();
+  const out = [];
+  for (let i = 0; i < arr.length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = i - Math.floor(windowSize / 2); j <= i + Math.floor(windowSize / 2); j++) {
+      if (j >= 0 && j < arr.length) { sum += arr[j]; count++; }
     }
+    out.push(sum / (count || 1));
+  }
+  return out;
+}
 
-    boardEl.appendChild(row);
-    cells.push(rowCells);
+// -------- Data generation --------
+
+function nextValueForSeries(s, idx) {
+  // Different patterns so lines aren't identical:
+  // A: random walk
+  // B: sine-ish + noise
+  // C: jumpy random
+  const range = (maxVal - minVal) || 1;
+
+  if (idx === 0) {
+    const step = randBetween(-0.08 * range, 0.08 * range);
+    return clamp(s.last + step, minVal, maxVal);
+  }
+
+  if (idx === 1) {
+    const t = Date.now() / 1000;
+    const base = (Math.sin(t * 1.2) * 0.35 + 0.5) * range + minVal;
+    const noise = randBetween(-0.06 * range, 0.06 * range);
+    return clamp(base + noise, minVal, maxVal);
+  }
+
+  // idx === 2
+  const val = randBetween(minVal, maxVal);
+  return val;
+}
+
+function pushNewDataPoint() {
+  seriesList.forEach((s, idx) => {
+    const val = nextValueForSeries(s, idx);
+    s.trend = val - s.last;
+    s.last = val;
+
+    s.data.push(val);
+    if (s.data.length > MAX_POINTS) s.data.shift();
+  });
+}
+
+function seedInitialData() {
+  seriesList.forEach(s => { s.data = []; s.last = (minVal + maxVal) / 2; s.trend = 0; });
+  for (let i = 0; i < MAX_POINTS; i++) pushNewDataPoint();
+}
+
+// -------- Drawing (Canvas) --------
+
+function clearCanvas() {
+  ctx.clearRect(0, 0, WIDTH, HEIGHT);
+  // background fill (theme)
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+}
+
+function drawGridAndLabels() {
+  if (!gridToggle.checked) return;
+
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = theme.grid;
+
+  // Vertical grid lines + x labels
+  for (let x = 0; x <= WIDTH; x += GRID_X) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, HEIGHT);
+    ctx.stroke();
+
+    // x label
+    ctx.fillStyle = theme.text;
+    ctx.font = "12px system-ui, Arial";
+    ctx.fillText(String(x), x + 4, HEIGHT - 8);
+  }
+
+  // Horizontal grid lines + y labels (values)
+  for (let y = 0; y <= HEIGHT; y += GRID_Y) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(WIDTH, y);
+    ctx.stroke();
+
+    // label = value for that y
+    const val = canvasToValue(y);
+    ctx.fillStyle = theme.text;
+    ctx.font = "12px system-ui, Arial";
+    ctx.fillText(val.toFixed(0), 6, y - 6);
+  }
+
+  // Axis lines
+  ctx.strokeStyle = theme.axis;
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, HEIGHT);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(0, HEIGHT);
+  ctx.lineTo(WIDTH, HEIGHT);
+  ctx.stroke();
+}
+
+function getSeriesDrawPoints(values) {
+  // Convert values -> canvas points
+  const ys = smoothToggle.checked ? movingAverage(values, 5) : values;
+  const pts = ys.map((v, i) => ({
+    x: i * STEP_X,
+    y: normalizeToCanvas(v),
+    value: values[i]
+  }));
+  return pts;
+}
+
+function drawLineSeries(points, color) {
+  if (points.length < 2) return;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 5;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  ctx.stroke();
+}
+
+function drawScatterSeries(points, color) {
+  ctx.fillStyle = color;
+  for (const p of points) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
-function clearBoardStyles() {
-  for (let r = 0; r < MAX_TRIES; r++) {
-    for (let c = 0; c < WORD_LEN; c++) {
-      const cell = cells[r][c];
-      cell.textContent = "";
-      cell.className = "cell";
-    }
+function drawAreaSeries(points, color) {
+  if (points.length < 2) return;
+
+  // Fill under line
+  ctx.fillStyle = color + "33"; // alpha-ish (works for hex in many browsers)
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, HEIGHT);
+  ctx.lineTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  ctx.lineTo(points[points.length - 1].x, HEIGHT);
+  ctx.closePath();
+  ctx.fill();
+
+  // Outline
+  drawLineSeries(points, color);
+}
+
+function drawBarSeries(points, color, seriesIndex) {
+  // Bars: use a smaller width so multiple series can be seen
+  const barGroupWidth = STEP_X * 0.9;
+  const barWidth = barGroupWidth / seriesList.length;
+  const offset = (seriesIndex * barWidth) - (barGroupWidth / 2) + (barWidth / 2);
+
+  ctx.fillStyle = color + "CC";
+
+  for (const p of points) {
+    const x = p.x + offset;
+    const y = p.y;
+    const h = HEIGHT - y;
+    ctx.fillRect(x - barWidth / 2, y, barWidth, h);
   }
 }
 
-function sanitizeGuess(raw) {
-  return raw.trim().toLowerCase();
+function drawChart() {
+  clearCanvas();
+  drawGridAndLabels();
+
+  seriesList.forEach((s, idx) => {
+    s.color = theme.series[idx];
+    const pts = getSeriesDrawPoints(s.data);
+
+    if (chartType === "line") drawLineSeries(pts, s.color);
+    if (chartType === "scatter") drawScatterSeries(pts, s.color);
+    if (chartType === "area") drawAreaSeries(pts, s.color);
+    if (chartType === "bar") drawBarSeries(pts, s.color, idx);
+  });
 }
 
-function validateGuess(guess) {
-  if (guess.length !== WORD_LEN) {
-    return `Guess must be exactly ${WORD_LEN} letters.`;
-  }
-  if (!/^[a-z]+$/.test(guess)) {
-    return "Use only letters (A-Z).";
-  }
-  return "";
+// -------- Tooltips (hover) --------
+
+function getNearestPoint(mouseX, mouseY) {
+  // Find nearest point among all series (based on x proximity + distance)
+  let best = null;
+
+  seriesList.forEach((s, idx) => {
+    const pts = getSeriesDrawPoints(s.data);
+    // since x is evenly spaced, estimate index from mouseX:
+    const approx = Math.round(mouseX / STEP_X);
+    const candidates = [approx - 1, approx, approx + 1];
+
+    candidates.forEach(i => {
+      if (i < 0 || i >= pts.length) return;
+      const p = pts[i];
+      const dx = p.x - mouseX;
+      const dy = p.y - mouseY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (!best || dist < best.dist) {
+        best = {
+          dist,
+          seriesName: s.name,
+          seriesIndex: idx,
+          x: p.x,
+          y: p.y,
+          value: s.data[i],
+          pointIndex: i
+        };
+      }
+    });
+  });
+
+  return best;
 }
 
-/*
-  Wordle-like feedback with duplicates handled:
+function showTooltip(info, clientX, clientY) {
+  const color = theme.series[info.seriesIndex];
+  tooltip.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="width:10px;height:10px;border-radius:999px;background:${color};display:inline-block;"></span>
+      <b>${info.seriesName}</b>
+    </div>
+    <div>Index: <b>${info.pointIndex}</b></div>
+    <div>X: <b>${info.x}</b> px • Y: <b>${info.y.toFixed(0)}</b> px</div>
+    <div>Value: <b>${info.value.toFixed(2)}</b></div>
+  `;
 
-  Step 1: Mark greens, and "consume" matched letters from target counts
-  Step 2: For remaining letters, mark yellow if still available in target counts, else red
-*/
-function getFeedback(guess, target) {
-  const feedback = Array(WORD_LEN).fill("red");
-  const targetCounts = {};
-
-  // count target letters
-  for (const ch of target) {
-    targetCounts[ch] = (targetCounts[ch] || 0) + 1;
-  }
-
-  // pass 1: greens
-  for (let i = 0; i < WORD_LEN; i++) {
-    if (guess[i] === target[i]) {
-      feedback[i] = "green";
-      targetCounts[guess[i]] -= 1;
-    }
-  }
-
-  // pass 2: yellows (only if still available)
-  for (let i = 0; i < WORD_LEN; i++) {
-    if (feedback[i] === "green") continue;
-
-    const ch = guess[i];
-    if (targetCounts[ch] > 0) {
-      feedback[i] = "yellow";
-      targetCounts[ch] -= 1;
-    } else {
-      feedback[i] = "red";
-    }
-  }
-
-  return feedback;
+  tooltip.style.left = `${clientX}px`;
+  tooltip.style.top = `${clientY}px`;
+  tooltip.classList.remove("hidden");
 }
 
-function paintRow(rowIndex, guess, feedback) {
-  // Put letters first
-  for (let c = 0; c < WORD_LEN; c++) {
-    const cell = cells[rowIndex][c];
-    cell.textContent = guess[c].toUpperCase();
-    cell.classList.add("filled");
-  }
+function hideTooltip() {
+  tooltip.classList.add("hidden");
+}
 
-  // Reveal with small stagger for nicer effect
-  for (let c = 0; c < WORD_LEN; c++) {
-    const cell = cells[rowIndex][c];
-    setTimeout(() => {
-      cell.classList.add("reveal");
-      // apply color class after flip reaches "hidden" phase
-      setTimeout(() => {
-        cell.classList.add(feedback[c]);
-      }, 280);
-    }, c * 90);
+// -------- Statistics --------
+
+function calcStats(values) {
+  if (values.length === 0) return null;
+  let min = Infinity, max = -Infinity, sum = 0;
+  for (const v of values) {
+    min = Math.min(min, v);
+    max = Math.max(max, v);
+    sum += v;
+  }
+  const avg = sum / values.length;
+  const current = values[values.length - 1];
+  return { min, max, avg, current };
+}
+
+function trendArrow(delta) {
+  if (Math.abs(delta) < 0.0001) return "→";
+  return delta > 0 ? "↗" : "↘";
+}
+
+function renderStats() {
+  statsPanel.innerHTML = "";
+
+  seriesList.forEach((s, idx) => {
+    const st = calcStats(s.data);
+    if (!st) return;
+
+    const card = document.createElement("div");
+    card.className = "stat-card";
+
+    const title = document.createElement("div");
+    title.className = "stat-title";
+
+    const dot = document.createElement("span");
+    dot.style.width = "10px";
+    dot.style.height = "10px";
+    dot.style.borderRadius = "999px";
+    dot.style.background = theme.series[idx];
+
+    const txt = document.createElement("span");
+    txt.textContent = `${s.name} ${trendArrow(s.trend)}`;
+
+    title.appendChild(dot);
+    title.appendChild(txt);
+
+    const kv = document.createElement("div");
+    kv.className = "kv";
+    kv.innerHTML = `
+      <div>Current: <b>${st.current.toFixed(2)}</b></div>
+      <div>Avg: <b>${st.avg.toFixed(2)}</b></div>
+      <div>Min: <b>${st.min.toFixed(2)}</b></div>
+      <div>Max: <b>${st.max.toFixed(2)}</b></div>
+    `;
+
+    card.appendChild(title);
+    card.appendChild(kv);
+    statsPanel.appendChild(card);
+  });
+}
+
+// -------- Interval control --------
+
+function startTimer() {
+  stopTimer();
+  timerId = setInterval(() => {
+    pushNewDataPoint();
+    drawChart();
+    renderStats();
+  }, intervalMs);
+}
+
+function stopTimer() {
+  if (timerId) {
+    clearInterval(timerId);
+    timerId = null;
   }
 }
 
-function endGame(won) {
-  gameOver = true;
-  inputEl.disabled = true;
-  guessBtn.disabled = true;
-  newGameBtn.classList.remove("hidden");
+// -------- Theme application --------
 
-  stats.played += 1;
+function applyTheme(themeKey) {
+  theme = THEMES[themeKey] || THEMES.dark;
 
-  if (won) {
-    stats.wins += 1;
-    stats.streak += 1;
-    setMessage("You won! 🎉", "success");
-    alert("You won! 🎉");
+  // Update CSS variables to match legend dots/colors (optional polish)
+  document.documentElement.style.setProperty("--s1", theme.series[0]);
+  document.documentElement.style.setProperty("--s2", theme.series[1]);
+  document.documentElement.style.setProperty("--s3", theme.series[2]);
+
+  // Light theme should also invert overall background panel vibe a bit
+  if (themeKey === "light") {
+    document.documentElement.style.setProperty("--bg", "#e5e7eb");
+    document.documentElement.style.setProperty("--text", "#0b1220");
+    document.documentElement.style.setProperty("--muted", "rgba(11,18,32,.65)");
+    document.documentElement.style.setProperty("--panel", "rgba(255,255,255,.70)");
+    document.documentElement.style.setProperty("--border", "rgba(0,0,0,.12)");
+    document.documentElement.style.setProperty("--btn", "rgba(0,0,0,.06)");
+    document.documentElement.style.setProperty("--btn-hover", "rgba(0,0,0,.10)");
   } else {
-    stats.streak = 0;
-    const upper = targetWord.toUpperCase();
-    setMessage(`You lost! The word was: ${upper}`, "error");
-    alert(`You lost! The word was: ${upper}`);
+    document.documentElement.style.setProperty("--bg", "#0b1220");
+    document.documentElement.style.setProperty("--text", "#e5e7eb");
+    document.documentElement.style.setProperty("--muted", "rgba(229,231,235,.65)");
+    document.documentElement.style.setProperty("--panel", "rgba(255,255,255,.06)");
+    document.documentElement.style.setProperty("--border", "rgba(255,255,255,.12)");
+    document.documentElement.style.setProperty("--btn", "rgba(255,255,255,.08)");
+    document.documentElement.style.setProperty("--btn-hover", "rgba(255,255,255,.12)");
   }
 
-  updateStatsUI();
+  // Redraw
+  drawChart();
+  renderStats();
 }
 
-function handleGuess() {
-  if (gameOver) return;
+// -------- Events --------
 
-  const guess = sanitizeGuess(inputEl.value);
-  const error = validateGuess(guess);
+toggleBtn.addEventListener("click", () => {
+  isRunning = !isRunning;
+  if (isRunning) {
+    toggleBtn.textContent = "Pause";
+    startTimer();
+  } else {
+    toggleBtn.textContent = "Start";
+    stopTimer();
+  }
+});
 
-  if (error) {
-    setMessage(error, "error");
+resetBtn.addEventListener("click", () => {
+  // read range first
+  minVal = Number(minInput.value);
+  maxVal = Number(maxInput.value);
+
+  if (!Number.isFinite(minVal) || !Number.isFinite(maxVal) || minVal === maxVal) {
+    alert("Please set valid Min/Max values (and they must be different).");
     return;
   }
 
-  setMessage(""); // clear message
+  seedInitialData();
+  drawChart();
+  renderStats();
+});
 
-  const feedback = getFeedback(guess, targetWord);
-  paintRow(currentRow, guess, feedback);
+exportBtn.addEventListener("click", () => {
+  const url = canvas.toDataURL("image/png");
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "chart.png";
+  a.click();
+});
 
-  // Check win
-  if (guess === targetWord) {
-    // wait for reveal to look nicer
-    setTimeout(() => endGame(true), 900);
-    return;
-  }
+intervalSlider.addEventListener("input", () => {
+  intervalMs = Number(intervalSlider.value);
+  intervalLabel.textContent = String(intervalMs);
 
-  currentRow += 1;
+  if (isRunning) startTimer();
+});
 
-  if (currentRow >= MAX_TRIES) {
-    setTimeout(() => endGame(false), 900);
-    return;
-  }
+minInput.addEventListener("change", () => {
+  minVal = Number(minInput.value);
+});
+maxInput.addEventListener("change", () => {
+  maxVal = Number(maxInput.value);
+});
 
-  inputEl.value = "";
-  inputEl.focus();
-}
+gridToggle.addEventListener("change", () => {
+  drawChart();
+});
 
-function newGame() {
-  targetWord = pickRandomWord();
-  currentRow = 0;
-  gameOver = false;
+smoothToggle.addEventListener("change", () => {
+  drawChart();
+});
 
-  clearBoardStyles();
-  setMessage("New game started. Good luck!");
+themeSelect.addEventListener("change", () => {
+  applyTheme(themeSelect.value);
+});
 
-  inputEl.value = "";
-  inputEl.disabled = false;
-  guessBtn.disabled = false;
-  newGameBtn.classList.add("hidden");
-
-  inputEl.focus();
-
-  // (Optional debug)
-  // console.log("Target:", targetWord);
-}
-
-function wireEvents() {
-  guessBtn.addEventListener("click", handleGuess);
-
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") handleGuess();
+typeButtons.forEach(btn => {
+  btn.addEventListener("click", () => {
+    typeButtons.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    chartType = btn.dataset.type;
+    drawChart();
   });
+});
 
-  // Force only 5 letters visually + keep clean
-  inputEl.addEventListener("input", () => {
-    inputEl.value = inputEl.value.replace(/[^a-zA-Z]/g, "").slice(0, WORD_LEN);
-  });
+// Tooltip mouse handling
+canvas.addEventListener("mousemove", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-  newGameBtn.addEventListener("click", newGame);
-}
+  const nearest = getNearestPoint(x, y);
+  if (!nearest) return;
 
-// Init
-buildBoard();
-wireEvents();
-updateStatsUI();
-newGame();
+  // show tooltip only if close enough (hover radius)
+  if (nearest.dist < 18) {
+    showTooltip(nearest, e.clientX - rect.left, e.clientY - rect.top);
+  } else {
+    hideTooltip();
+  }
+});
+
+canvas.addEventListener("mouseleave", () => hideTooltip());
+
+// -------- Init --------
+
+(function init(){
+  intervalLabel.textContent = String(intervalMs);
+  minVal = Number(minInput.value);
+  maxVal = Number(maxInput.value);
+
+  applyTheme("dark");
+  seedInitialData();
+  drawChart();
+  renderStats();
+  startTimer();
+})();
